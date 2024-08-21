@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face++ Analyzer</title>
+    <style>
+        video, canvas {
+            width: 320px;
+            height: 240px;
+            border: 1px solid black;
+            margin-right: 20px;
+        }
+        #container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #recommendation {
+            margin-top: 20px;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+        #results {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Face++ Analyzer</h1>
+    <div id="container">
+        <video id="webcam" autoplay></video>
+        <canvas id="overlay"></canvas>
+    </div>
+    <div id="recommendation">Recommendations based on the detected attributes will appear here.</div>
+    <div id="results"></div>
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('overlay');
+        const context = canvas.getContext('2d');
+        const recommendationElement = document.getElementById('recommendation');
+        const resultsElement = document.getElementById('results');
+
+        async function setupWebcam() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                };
+            } catch (error) {
+                console.error('Error accessing webcam:', error);
+                recommendationElement.textContent = `Error accessing webcam: ${error.message}`;
+            }
+        }
+
+        async function sendFrameToServer() {
+            try {
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const dataUrl = canvas.toDataURL('image/jpeg');
+                const blob = await fetch(dataUrl).then(res => res.blob());
+                const formData = new FormData();
+                formData.append('file', blob);
+
+                const response = await fetch('/detect_attributes', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Server Error: ${errorText}`);
+                }
+
+                const result = await response.json();
+                displayResults(result);
+                generateRecommendation(result.dominantEmotion);
+            } catch (error) {
+                console.error('Error:', error);
+                recommendationElement.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        function displayResults(result) {
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            if (result.error) {
+                recommendationElement.textContent = result.error;
+                return;
+            }
+            resultsElement.textContent = `
+                Head Pose: ${JSON.stringify(result.headPose)}\n
+                Eye Status: ${JSON.stringify(result.eyeStatus)}\n
+                Emotion: ${JSON.stringify(result.emotion)}\n
+                Dominant Emotion: ${result.dominantEmotion}
+            `;
+        }
+
+        function generateRecommendation(dominantEmotion) {
+            // Customize recommendations based on the dominant emotion
+            let recommendation = '';
+            switch(dominantEmotion) {
+                case 'happiness':
+                    recommendation = 'You seem happy! How about some upbeat music or a fun video?';
+                    break;
+                case 'sadness':
+                    recommendation = 'It looks like you might be feeling down. Maybe try some relaxing content.';
+                    break;
+                case 'anger':
+                    recommendation = 'Feeling a bit angry? Some calming activities might help.';
+                    break;
+                case 'surprise':
+                    recommendation = 'You seem surprised! How about some exciting new content?';
+                    break;
+                case 'neutral':
+                    recommendation = 'You seem neutral. How about something to lift your mood?';
+                    break;
+                default:
+                    recommendation = 'We couldn’t quite read your mood. Maybe try again!';
+            }
+            recommendationElement.textContent = recommendation;
+        }
+
+        setupWebcam();
+        setInterval(sendFrameToServer, 5000);  // Adjust the interval as needed
+    </script>
+</body>
+</html>
