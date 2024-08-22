@@ -57,30 +57,33 @@ def extract_emotion_probs(emotion_dict):
 async def detect_attributes(file: UploadFile = File(...)):
     try:
         contents = await file.read()
+        
+        # Initialize results dictionary
+        results = {
+            "Face++ API": {},
+            "ElenaRyumina Model": {},
+            "Combined Results": {}
+        }
 
         # Face++ API request
         files = {'image_file': contents}
         data = {
             'api_key': FACEPP_API_KEY,
             'api_secret': FACEPP_API_SECRET,
-            'return_attributes': 'headpose,eyestatus,emotion'
+            'return_attributes': 'emotion'
         }
     
         response = requests.post(FACEPP_API_ENDPOINT, files=files, data=data)
         response.raise_for_status()
 
         faces = response.json().get('faces', [])
-        facepp_dominant_emotion = None
-        facepp_emotion = None
-
         if faces:
             face_attributes = faces[0]['attributes']
             facepp_emotion = face_attributes['emotion']
-            facepp_dominant_emotion = extract_emotion_probs(facepp_emotion)
+            results["Face++ API"]["emotions"] = facepp_emotion
+            results["Face++ API"]["dominant_emotion"] = extract_emotion_probs(facepp_emotion)
 
         # Process image for ElenaRyumina/face_emotion_recognition Emotion Detection if model is available
-        face_emotion_emotions = None
-        face_emotion_dominant_emotion = None
         if face_emotion_model:
             image = Image.open(file.file).convert("RGB")
             image_tensor = preprocess(image).unsqueeze(0)  # Add batch dimension
@@ -88,24 +91,20 @@ async def detect_attributes(file: UploadFile = File(...)):
             face_emotion_output = face_emotion_model(image_tensor)
             face_emotion_probs = torch.nn.functional.softmax(face_emotion_output.logits, dim=1)
             face_emotion_emotions = {label: prob.item() for label, prob in zip(face_emotion_model.config.id2label.values(), face_emotion_probs[0])}
-            face_emotion_dominant_emotion = extract_emotion_probs(face_emotion_emotions)
+            
+            results["ElenaRyumina Model"]["emotions"] = face_emotion_emotions
+            results["ElenaRyumina Model"]["dominant_emotion"] = extract_emotion_probs(face_emotion_emotions)
 
-        # Compare and select the most probable emotion
-        if face_emotion_emotions and facepp_emotion:
-            combined_emotions = {**face_emotion_emotions, **facepp_emotion}
-            dominant_emotion = extract_emotion_probs(combined_emotions)
-        elif facepp_emotion:
-            dominant_emotion = facepp_dominant_emotion
-        elif face_emotion_emotions:
-            dominant_emotion = face_emotion_dominant_emotion
-        else:
-            dominant_emotion = None
+        # Combine results if both methods are available
+        if results["Face++ API"] and results["ElenaRyumina Model"]:
+            combined_emotions = {**results["Face++ API"]["emotions"], **results["ElenaRyumina Model"]["emotions"]}
+            results["Combined Results"]["dominant_emotion"] = extract_emotion_probs(combined_emotions)
+        elif results["Face++ API"]:
+            results["Combined Results"]["dominant_emotion"] = results["Face++ API"]["dominant_emotion"]
+        elif results["ElenaRyumina Model"]:
+            results["Combined Results"]["dominant_emotion"] = results["ElenaRyumina Model"]["dominant_emotion"]
 
-        return JSONResponse({
-            "faceppEmotion": facepp_emotion,
-            "faceEmotionRecognitionEmotion": face_emotion_emotions,
-            "dominantEmotion": dominant_emotion
-        })
+        return JSONResponse(results)
     except requests.RequestException as e:
         logging.error(f"Request error: {str(e)}")
         return JSONResponse({"error": f"Request error: {str(e)}"}, status_code=400)
