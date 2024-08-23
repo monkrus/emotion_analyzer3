@@ -3,128 +3,99 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Face++ Analyzer</title>
+    <title>Live Webcam Emotion Detection</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        video, canvas {
-            width: 320px;
-            height: 240px;
-            border: 1px solid black;
-            margin-right: 20px;
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
         }
-        #container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-        #recommendation {
-            margin-top: 20px;
-            font-size: 1.5em;
-            font-weight: bold;
+        video {
+            width: 100%;
+            max-width: 600px;
+            display: block;
+            margin: 0 auto;
         }
         #results {
-            font-size: 1.2em;
-            font-weight: bold;
             margin-top: 20px;
+        }
+        #emotionChart {
+            max-width: 400px;
+            margin: 20px auto;
         }
     </style>
 </head>
 <body>
-    <h1>Face++ Analyzer</h1>
-    <div id="container">
-        <video id="webcam" autoplay></video>
-        <canvas id="overlay"></canvas>
-    </div>
-    <div id="recommendation">Recommendations based on the detected attributes will appear here.</div>
+    <h1>Live Webcam Emotion Detection</h1>
+    <video id="webcam" autoplay></video>
     <div id="results"></div>
+    <canvas id="emotionChart"></canvas>
+
     <script>
+        let chart;
+        let socket;
+
+        function startWebSocket() {
+            socket = new WebSocket(`ws://${window.location.host}/ws/emotion`);
+
+            socket.onopen = function () {
+                console.log("WebSocket connection established.");
+            };
+
+            socket.onmessage = function (event) {
+                const data = JSON.parse(event.data);
+                displayResults(data);
+            };
+
+            socket.onerror = function (error) {
+                console.error("WebSocket error:", error);
+            };
+
+            socket.onclose = function (event) {
+                console.error("WebSocket closed. Code:", event.code, "Reason:", event.reason);
+                setTimeout(startWebSocket, 1000); // Attempt to reconnect after 1 second
+            };
+        }
+
+        function captureFrame(video) {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL('image/jpeg');
+        }
+
+        function displayResults(data) {
+            // ... (keep the existing displayResults function as is) ...
+        }
+
+        function updateChart(emotions) {
+            // ... (keep the existing updateChart function as is) ...
+        }
+
+        // Get access to webcam and start processing frames
         const video = document.getElementById('webcam');
-        const canvas = document.getElementById('overlay');
-        const context = canvas.getContext('2d');
-        const recommendationElement = document.getElementById('recommendation');
-        const resultsElement = document.getElementById('results');
+        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+            video.srcObject = stream;
+            video.play();
 
-        async function setupWebcam() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                video.srcObject = stream;
-                video.onloadedmetadata = () => {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                };
-            } catch (error) {
-                console.error('Error accessing webcam:', error);
-                recommendationElement.textContent = `Error accessing webcam: ${error.message}`;
-            }
-        }
+            video.addEventListener('play', function () {
+                setInterval(function () {
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        const frame = captureFrame(video);
+                        socket.send(frame);
+                    }
+                }, 1000);
+            });
+        }).catch(error => {
+            console.error("Error accessing webcam:", error);
+        });
 
-        async function sendFrameToServer() {
-            try {
-                context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const dataUrl = canvas.toDataURL('image/jpeg');
-                const blob = await fetch(dataUrl).then(res => res.blob());
-                const formData = new FormData();
-                formData.append('file', blob);
-
-                const response = await fetch('/detect_attributes', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`Server Error: ${errorText}`);
-                }
-
-                const result = await response.json();
-                displayResults(result);
-                generateRecommendation(result.dominantEmotion);
-            } catch (error) {
-                console.error('Error:', error);
-                recommendationElement.textContent = `Error: ${error.message}`;
-            }
-        }
-
-        function displayResults(result) {
-            context.clearRect(0, 0, canvas.width, canvas.height);
-            if (result.error) {
-                recommendationElement.textContent = result.error;
-                return;
-            }
-            resultsElement.textContent = `
-                Head Pose: ${JSON.stringify(result.headPose)}\n
-                Eye Status: ${JSON.stringify(result.eyeStatus)}\n
-                Emotion: ${JSON.stringify(result.emotion)}\n
-                Dominant Emotion: ${result.dominantEmotion}
-            `;
-        }
-
-        function generateRecommendation(dominantEmotion) {
-            // Customize recommendations based on the dominant emotion
-            let recommendation = '';
-            switch(dominantEmotion) {
-                case 'happiness':
-                    recommendation = 'You seem happy! How about some upbeat music or a fun video?';
-                    break;
-                case 'sadness':
-                    recommendation = 'It looks like you might be feeling down. Maybe try some relaxing content.';
-                    break;
-                case 'anger':
-                    recommendation = 'Feeling a bit angry? Some calming activities might help.';
-                    break;
-                case 'surprise':
-                    recommendation = 'You seem surprised! How about some exciting new content?';
-                    break;
-                case 'neutral':
-                    recommendation = 'You seem neutral. How about something to lift your mood?';
-                    break;
-                default:
-                    recommendation = 'We couldn’t quite read your mood. Maybe try again!';
-            }
-            recommendationElement.textContent = recommendation;
-        }
-
-        setupWebcam();
-        setInterval(sendFrameToServer, 5000);  // Adjust the interval as needed
+        // Start WebSocket connection
+        startWebSocket();
     </script>
 </body>
 </html>
