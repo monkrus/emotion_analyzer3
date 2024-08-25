@@ -48,8 +48,9 @@ def extract_dominant_attribute(attribute_dict):
     return max(attribute_dict, key=attribute_dict.get)
 
 def get_recommendation(emotion, head_pose, eye_status):
-    # ... (keep the existing get_recommendation function as is) ...
-    pass  # Add this line or replace with your existing code
+    # Placeholder for a recommendation logic based on emotion, head pose, and eye status
+    # You can customize this function based on your application's requirements
+    return f"Recommended action for {emotion} based on head pose and eye status."
 
 @app.websocket("/ws/emotion")
 async def websocket_endpoint(websocket: WebSocket):

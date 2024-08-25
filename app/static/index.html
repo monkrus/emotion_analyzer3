@@ -11,15 +11,21 @@
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
         video {
             width: 100%;
             max-width: 600px;
             display: block;
-            margin: 0 auto;
         }
         #results {
             margin-top: 20px;
+            width: 100%;
+            max-width: 600px;
+            display: flex;
+            justify-content: flex-end;
         }
         #emotionChart {
             max-width: 400px;
@@ -30,7 +36,9 @@
 <body>
     <h1>Live Webcam Emotion Detection</h1>
     <video id="webcam" autoplay></video>
-    <div id="results"></div>
+    <div id="results">
+        <h2 id="dominantEmotion"></h2>
+    </div>
     <canvas id="emotionChart"></canvas>
 
     <script>
@@ -69,11 +77,46 @@
         }
 
         function displayResults(data) {
-            // ... (keep the existing displayResults function as is) ...
+            const facepp = data["Face++"];
+            const dominantEmotion = facepp.dominant_emotion || "No emotion detected";
+            document.getElementById('dominantEmotion').textContent = `Dominant Emotion: ${dominantEmotion}`;
+            
+            if (facepp.emotions) {
+                updateChart(facepp.emotions);
+            }
         }
 
         function updateChart(emotions) {
-            // ... (keep the existing updateChart function as is) ...
+            const labels = Object.keys(emotions);
+            const data = Object.values(emotions);
+
+            if (!chart) {
+                const ctx = document.getElementById('emotionChart').getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Emotion Intensity',
+                            data: data,
+                            backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            } else {
+                chart.data.labels = labels;
+                chart.data.datasets[0].data = data;
+                chart.update();
+            }
         }
 
         // Get access to webcam and start processing frames
@@ -88,7 +131,7 @@
                         const frame = captureFrame(video);
                         socket.send(frame);
                     }
-                }, 1000);
+                }, 10000); // Capture frame every 10 seconds
             });
         }).catch(error => {
             console.error("Error accessing webcam:", error);
