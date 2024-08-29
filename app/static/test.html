@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Webcam Emotion Detection</title>
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        video {
+            width: 100%;
+            max-width: 600px;
+            display: block;
+        }
+        #results {
+            margin-top: 20px;
+            width: 100%;
+            max-width: 600px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #dominantEmotion, #additionalEmotion {
+            text-align: center;
+            width: 100%;
+        }
+        #emotionChart {
+            max-width: 400px;
+            margin: 20px auto;
+        }
+        #status {
+            margin-top: 10px;
+            font-size: 1.2em;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <h1>Live Webcam Emotion Detection</h1>
+    <video id="webcam" autoplay></video>
+    <div id="results">
+        <h2 id="dominantEmotion"></h2>
+        <h2 id="additionalEmotion"></h2>
+    </div>
+    <canvas id="emotionChart"></canvas>
+    <div id="status">Connecting to WebSocket...</div>
+
+    <script>
+        let chart;
+        let socket;
+        const statusElement = document.getElementById('status');
+
+        function startWebSocket() {
+            socket = new WebSocket(`ws://${window.location.host}/ws/emotion`);
+
+            socket.onopen = function () {
+                console.log("WebSocket connection established.");
+                statusElement.textContent = "WebSocket connection established.";
+            };
+
+            socket.onmessage = function (event) {
+                const data = JSON.parse(event.data);
+
+                if (data["Face++"].error) {
+                    statusElement.textContent = `Error: ${data["Face++"].error}`;
+                    return;
+                }
+
+                document.getElementById("dominantEmotion").textContent = `Dominant Emotion: ${data["Face++"].dominant_emotion}`;
+                document.getElementById("additionalEmotion").textContent = `Additional Emotion: ${data["Face++"].additional_emotion}`;
+
+                const emotions = data["Face++"].emotions;
+
+                if (emotions) {
+                    const labels = Object.keys(emotions);
+                    const values = Object.values(emotions);
+
+                    if (!chart) {
+                        const ctx = document.getElementById('emotionChart').getContext('2d');
+                        chart = new Chart(ctx, {
+                            type: 'bar',
+                            data: {
+                                labels: labels,
+                                datasets: [{
+                                    label: 'Emotion Intensity',
+                                    data: values,
+                                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                                    borderColor: 'rgba(54, 162, 235, 1)',
+                                    borderWidth: 1
+                                }]
+                            },
+                            options: {
+                                scales: {
+                                    y: {
+                                        beginAtZero: true
+                                    }
+                                }
+                            }
+                        });
+                    } else {
+                        chart.data.datasets[0].data = values;
+                        chart.update();
+                    }
+                }
+            };
+
+            socket.onclose = function () {
+                console.log("WebSocket connection closed. Reconnecting...");
+                statusElement.textContent = "WebSocket connection closed. Reconnecting...";
+                setTimeout(startWebSocket, 1000);
+            };
+
+            socket.onerror = function (error) {
+                console.error("WebSocket error: ", error);
+                statusElement.textContent = "WebSocket error. Check console for details.";
+            };
+        }
+
+        function startWebcam() {
+            const video = document.getElementById('webcam');
+
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    video.srcObject = stream;
+
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+
+                    video.addEventListener('play', () => {
+                        function sendFrame() {
+                            if (socket.readyState === WebSocket.OPEN) {
+                                canvas.width = video.videoWidth;
+                                canvas.height = video.videoHeight;
+                                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                const dataUrl = canvas.toDataURL('image/jpeg');
+                                socket.send(dataUrl);
+                            }
+
+                            requestAnimationFrame(sendFrame);
+                        }
+
+                        sendFrame();
+                    });
+                })
+                .catch(err => {
+                    console.error("Error accessing webcam: ", err);
+                    statusElement.textContent = "Error accessing webcam. Check console for details.";
+                });
+        }
+
+        startWebSocket();
+        startWebcam();
+    </script>
+</body>
+</html>
