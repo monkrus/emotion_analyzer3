@@ -7,8 +7,8 @@ import requests
 import os
 import logging
 import base64
-from collections import deque
-import asyncio
+from collections import deque, Counter
+import uvicorn
 
 app = FastAPI()
 
@@ -43,99 +43,94 @@ emotion_history = deque(maxlen=10)
 @app.get("/", response_class=HTMLResponse)
 async def main_page():
     try:
-        with open("static/index.html") as f:
+        with open("static/test.html") as f:
             return HTMLResponse(content=f.read(), status_code=200)
     except Exception as e:
         logging.error(f"Error loading main page: {str(e)}")
         return HTMLResponse(content=f"<h1>Error loading page</h1><p>{str(e)}</p>", status_code=500)
 
-@app.get("/favicon.ico", response_class=HTMLResponse)
-async def favicon():
-    return HTMLResponse(content="<link rel='icon' href='/static/webcam_favicon_orange_black.ico' type='image/x-icon'>", status_code=200)
-
 def extract_dominant_attribute(attribute_dict):
     return max(attribute_dict, key=attribute_dict.get)
 
 def calculate_most_intense_emotion():
-    combined_emotions = {
-        "anger": 0,
-        "disgust": 0,
-        "fear": 0,
-        "happiness": 0,
-        "sadness": 0,
-        "surprise": 0
-    }
+    combined_emotions = Counter()
 
-    # Sum up all the intensities for each emotion across the last 10 readings
     for emotions in emotion_history:
-        for emotion, intensity in emotions.items():
-            combined_emotions[emotion] += intensity
+        combined_emotions.update(emotions)
 
-    # Find the most intense emotion
-    most_intense_emotion = max(combined_emotions, key=combined_emotions.get)
-    most_intense_value = combined_emotions[most_intense_emotion]
-
-    if most_intense_value > 0:
-        logging.info(f"Most intense emotion: {most_intense_emotion} with intensity {most_intense_value}")
-        return f"You feel {most_intense_emotion}"
+    most_intense_emotion = combined_emotions.most_common(1)
+    if most_intense_emotion:
+        emotion, intensity = most_intense_emotion[0]
+        logging.info(f"Most intense emotion: {emotion} with intensity {intensity}")
+        return f"You are {emotion}"
     else:
         logging.info("No prevailing emotion detected")
-        return "You feel in progress..."
-
-async def process_emotion_image(image_bytes):
-    try:
-        files = {'image_file': image_bytes}
-        data = {
-            'api_key': FACEPP_API_KEY,
-            'api_secret': FACEPP_API_SECRET,
-            'return_attributes': 'emotion,headpose,eyestatus'
-        }
-
-        response = requests.post(FACEPP_API_ENDPOINT, files=files, data=data)
-        response.raise_for_status()
-
-        faces = response.json().get('faces', [])
-        if faces:
-            face_attributes = faces[0]['attributes']
-            emotions = face_attributes['emotion']
-            emotion_history.append(emotions)
-            return {
-                "emotions": emotions,
-                "head_pose": face_attributes['headpose'],
-                "eye_status": face_attributes['eyestatus'],
-                "dominant_emotion": extract_dominant_attribute(emotions),
-                "additional_emotion": calculate_most_intense_emotion()
-            }
-        else:
-            return {"error": "No face detected"}
-    except Exception as e:
-        logging.error(f"Face++ API error: {str(e)}")
-        return {"error": str(e)}
+        return "You are in progress..."
 
 @app.websocket("/ws/emotion")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logging.info("WebSocket connection established")
-
-    image_bytes = None
-
     while True:
         try:
-            # Check for new image data
-            if websocket.client_state == WebSocketState.CONNECTED:
-                try:
-                    data = await websocket.receive_text()
-                    image_data = data.split(",")[1]
-                    image_bytes = base64.b64decode(image_data)
-                except Exception as e:
-                    logging.error(f"Error receiving image data: {e}")
+            data = await websocket.receive_text()
+            image_data = data.split(",")[1]
+            image_bytes = base64.b64decode(image_data)
+            
+            results = {
+                "Face++": {
+                    "emotions": None,
+                    "head_pose": None,
+                    "eye_status": None,
+                    "dominant_emotion": None,
+                    "recommendation": None,
+                    "most_prevalent_emotion": None,
+                    "error": None
+                }
+            }
 
-            # Process image every 2 seconds
-            if image_bytes:
-                results = await process_emotion_image(image_bytes)
-                await websocket.send_json(results)
-                await asyncio.sleep(2)  # Wait for 2 seconds before the next measurement
+            try:
+                files = {'image_file': image_bytes}
+                data = {
+                    'api_key': FACEPP_API_KEY,
+                    'api_secret': FACEPP_API_SECRET,
+                    'return_attributes': 'emotion,headpose,eyestatus'
+                }
+            
+                response = requests.post(FACEPP_API_ENDPOINT, files=files, data=data)
+                response.raise_for_status()
 
+                faces = response.json().get('faces', [])
+                if faces:
+                    face_attributes = faces[0]['attributes']
+                    emotions = face_attributes['emotion']
+                    emotion_history.append(emotions)
+                    
+                    results["Face++"]["emotions"] = emotions
+                    results["Face++"]["head_pose"] = face_attributes['headpose']
+                    results["Face++"]["eye_status"] = face_attributes['eyestatus']
+                    results["Face++"]["dominant_emotion"] = extract_dominant_attribute(emotions)
+                   # results["Face++"]["recommendation"] = get_recommendation(
+                    #    results["Face++"]["dominant_emotion"],
+                    #    face_attributes['headpose'],
+                    #    face_attributes['eyestatus']
+                    #)
+                    
+                    # Calculate most prevalent emotion if we have 10 readings
+                    logging.info(f"Emotion history length: {len(emotion_history)}")
+                    if len(emotion_history) == 10:
+                        results["Face++"]["most_prevalent_emotion"] = calculate_most_intense_emotion()
+                        logging.info(f"Most prevalent emotion: {results['Face++']['most_prevalent_emotion']}")
+                        emotion_history.clear()  # Clear the history after processing 10 readings
+                    
+                    logging.info(f"Face++ API response: {response.json()}")
+                else:
+                    results["Face++"]["error"] = "No face detected"
+            except Exception as e:
+                logging.error(f"Face++ API error: {str(e)}")
+                results["Face++"]["error"] = str(e)
+            
+            await websocket.send_json(results)
         except WebSocketDisconnect:
             logging.info("Client disconnected")
             break
@@ -144,5 +139,4 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.send_json({"error": "Failed to process image."})
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("test:app", host="0.0.0.0", port=8002, reload=True)

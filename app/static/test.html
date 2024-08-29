@@ -29,7 +29,7 @@
             flex-direction: column;
             align-items: center;
         }
-        #dominantEmotion, #additionalEmotion {
+        #dominantEmotion, #mostPrevalentEmotion {
             text-align: center;
             width: 100%;
         }
@@ -37,128 +37,122 @@
             max-width: 400px;
             margin: 20px auto;
         }
-        #status {
-            margin-top: 10px;
-            font-size: 1.2em;
-            color: #555;
-        }
     </style>
 </head>
 <body>
     <h1>Live Webcam Emotion Detection</h1>
     <video id="webcam" autoplay></video>
     <div id="results">
-        <h2 id="dominantEmotion"></h2>
-        <h2 id="additionalEmotion"></h2>
+        <h2 id="dominantEmotion">Dominant Emotion: Not available</h2>
+        <h2 id="mostPrevalentEmotion">You are: Not available</h2>
     </div>
     <canvas id="emotionChart"></canvas>
-    <div id="status">Connecting to WebSocket...</div>
 
     <script>
         let chart;
         let socket;
-        const statusElement = document.getElementById('status');
 
         function startWebSocket() {
             socket = new WebSocket(`ws://${window.location.host}/ws/emotion`);
 
             socket.onopen = function () {
                 console.log("WebSocket connection established.");
-                statusElement.textContent = "WebSocket connection established.";
             };
 
             socket.onmessage = function (event) {
                 const data = JSON.parse(event.data);
-
-                if (data["Face++"].error) {
-                    statusElement.textContent = `Error: ${data["Face++"].error}`;
-                    return;
-                }
-
-                document.getElementById("dominantEmotion").textContent = `Dominant Emotion: ${data["Face++"].dominant_emotion}`;
-                document.getElementById("additionalEmotion").textContent = `Additional Emotion: ${data["Face++"].additional_emotion}`;
-
-                const emotions = data["Face++"].emotions;
-
-                if (emotions) {
-                    const labels = Object.keys(emotions);
-                    const values = Object.values(emotions);
-
-                    if (!chart) {
-                        const ctx = document.getElementById('emotionChart').getContext('2d');
-                        chart = new Chart(ctx, {
-                            type: 'bar',
-                            data: {
-                                labels: labels,
-                                datasets: [{
-                                    label: 'Emotion Intensity',
-                                    data: values,
-                                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                                    borderColor: 'rgba(54, 162, 235, 1)',
-                                    borderWidth: 1
-                                }]
-                            },
-                            options: {
-                                scales: {
-                                    y: {
-                                        beginAtZero: true
-                                    }
-                                }
-                            }
-                        });
-                    } else {
-                        chart.data.datasets[0].data = values;
-                        chart.update();
-                    }
-                }
-            };
-
-            socket.onclose = function () {
-                console.log("WebSocket connection closed. Reconnecting...");
-                statusElement.textContent = "WebSocket connection closed. Reconnecting...";
-                setTimeout(startWebSocket, 1000);
+                console.log("Received data: ", data);
+                displayResults(data);
             };
 
             socket.onerror = function (error) {
-                console.error("WebSocket error: ", error);
-                statusElement.textContent = "WebSocket error. Check console for details.";
+                console.error("WebSocket error:", error);
+            };
+
+            socket.onclose = function (event) {
+                console.error("WebSocket closed. Code:", event.code, "Reason:", event.reason);
+                setTimeout(startWebSocket, 1000); // Attempt to reconnect after 1 second
             };
         }
 
-        function startWebcam() {
-            const video = document.getElementById('webcam');
-
-            navigator.mediaDevices.getUserMedia({ video: true })
-                .then(stream => {
-                    video.srcObject = stream;
-
-                    const canvas = document.createElement('canvas');
-                    const context = canvas.getContext('2d');
-
-                    video.addEventListener('play', () => {
-                        function sendFrame() {
-                            if (socket.readyState === WebSocket.OPEN) {
-                                canvas.width = video.videoWidth;
-                                canvas.height = video.videoHeight;
-                                context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                                const dataUrl = canvas.toDataURL('image/jpeg');
-                                socket.send(dataUrl);
-                            }
-
-                            requestAnimationFrame(sendFrame);
-                        }
-
-                        sendFrame();
-                    });
-                })
-                .catch(err => {
-                    console.error("Error accessing webcam: ", err);
-                    statusElement.textContent = "Error accessing webcam. Check console for details.";
-                });
+        function captureFrame(video) {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL('image/jpeg');
         }
 
-        startWebSocket();
-        startWebcam();
+        function displayResults(data) {
+            const facepp = data["Face++"];
+            const dominantEmotion = facepp.dominant_emotion || "No emotion detected";
+            document.getElementById('dominantEmotion').textContent = `Dominant Emotion: ${dominantEmotion}`;
+            
+            const mostPrevalentEmotion = facepp.most_prevalent_emotion || "Not available";
+            document.getElementById('mostPrevalentEmotion').textContent = `You are: ${mostPrevalentEmotion}`;
+
+            console.log(`Updated Frontend - Dominant Emotion: ${dominantEmotion}, Most Prevalent Emotion: ${mostPrevalentEmotion}`);
+
+            if (facepp.emotions) {
+                updateChart(facepp.emotions);
+            }
+        }
+
+        function updateChart(emotions) {
+            const labels = Object.keys(emotions);
+            const data = Object.values(emotions);
+
+            if (!chart) {
+                const ctx = document.getElementById('emotionChart').getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Emotion Intensity',
+                            data: data,
+                            backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            } else {
+                chart.data.labels = labels;
+                chart.data.datasets[0].data = data;
+                chart.update();
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+            const video = document.getElementById("webcam");
+
+            if (navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ video: true })
+                    .then(function (stream) {
+                        video.srcObject = stream;
+                        startWebSocket();
+
+                        setInterval(function () {
+                            const frameData = captureFrame(video);
+                            socket.send(frameData);
+                        }, 2000); // Send frame every 2 seconds
+                    })
+                    .catch(function (error) {
+                        console.error("Error accessing webcam:", error);
+                    });
+            } else {
+                alert("Webcam not supported by your browser.");
+            }
+        });
     </script>
 </body>
 </html>
