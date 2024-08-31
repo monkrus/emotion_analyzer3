@@ -43,8 +43,8 @@
     <h1>Live Webcam Emotion Detection</h1>
     <video id="webcam" autoplay></video>
     <div id="results">
-        <h2 id="dominantEmotion">Dominant Emotion: Not available</h2>
-        <h2 id="mostPrevalentEmotion">You are: Not available</h2>
+        <h2 id="dominantEmotion">Dominant Emotion: Running...</h2>
+        <h2 id="mostPrevalentEmotion">Most intense: Running...</h2>
     </div>
     <canvas id="emotionChart"></canvas>
 
@@ -86,14 +86,22 @@
 
         function displayResults(data) {
             const facepp = data["Face++"];
-            const dominantEmotion = facepp.dominant_emotion || "No emotion detected";
-            document.getElementById('dominantEmotion').textContent = `Dominant Emotion: ${dominantEmotion}`;
             
-            const mostPrevalentEmotion = facepp.most_prevalent_emotion || "Not available";
-            document.getElementById('mostPrevalentEmotion').textContent = `You are: ${mostPrevalentEmotion}`;
+            // Handle Dominant Emotion
+            const dominantEmotion = facepp.dominant_emotion || "running...";
+            document.getElementById('dominantEmotion').textContent = `Dominant Emotion: ${dominantEmotion}`;
 
-            console.log(`Updated Frontend - Dominant Emotion: ${dominantEmotion}, Most Prevalent Emotion: ${mostPrevalentEmotion}`);
+            // Handle Most Intense Emotion
+            let mostIntenseEmotion = facepp.most_prevalent_emotion;
+            if (mostIntenseEmotion && !mostIntenseEmotion.includes("running...")) {
+                document.getElementById('mostPrevalentEmotion').textContent = mostIntenseEmotion;
+            } else {
+                document.getElementById('mostPrevalentEmotion').textContent = "Most intense: running...";
+            }
 
+            console.log(`Updated Frontend - Dominant Emotion: ${dominantEmotion}, Most Intense Emotion: ${mostIntenseEmotion}`);
+
+            // Update Chart if Emotions are Present
             if (facepp.emotions) {
                 updateChart(facepp.emotions);
             }
@@ -132,25 +140,23 @@
             }
         }
 
-        document.addEventListener("DOMContentLoaded", function () {
-            const video = document.getElementById("webcam");
+        document.addEventListener('DOMContentLoaded', async () => {
+            const video = document.getElementById('webcam');
+            const constraints = { video: true };
 
-            if (navigator.mediaDevices.getUserMedia) {
-                navigator.mediaDevices.getUserMedia({ video: true })
-                    .then(function (stream) {
-                        video.srcObject = stream;
-                        startWebSocket();
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                startWebSocket();
 
-                        setInterval(function () {
-                            const frameData = captureFrame(video);
-                            socket.send(frameData);
-                        }, 2000); // Send frame every 2 seconds
-                    })
-                    .catch(function (error) {
-                        console.error("Error accessing webcam:", error);
-                    });
-            } else {
-                alert("Webcam not supported by your browser.");
+                setInterval(() => {
+                    if (socket.readyState === WebSocket.OPEN) {
+                        const frame = captureFrame(video);
+                        socket.send(frame);
+                    }
+                }, 1000);
+            } catch (err) {
+                console.error("Error accessing webcam: ", err);
             }
         });
     </script>

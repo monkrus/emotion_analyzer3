@@ -37,8 +37,8 @@ if not FACEPP_API_KEY or not FACEPP_API_SECRET or not FACEPP_API_ENDPOINT:
 # Mount the static directory to serve static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# A deque to store the last 10 emotion readings
-emotion_history = deque(maxlen=10)
+# A deque to store the last 5 emotion readings
+emotion_history = deque(maxlen=5)
 
 @app.get("/", response_class=HTMLResponse)
 async def main_page():
@@ -62,10 +62,10 @@ def calculate_most_intense_emotion():
     if most_intense_emotion:
         emotion, intensity = most_intense_emotion[0]
         logging.info(f"Most intense emotion: {emotion} with intensity {intensity}")
-        return f"You are {emotion}"
+        return emotion
     else:
         logging.info("No prevailing emotion detected")
-        return "You are in progress..."
+        return None
 
 @app.websocket("/ws/emotion")
 async def websocket_endpoint(websocket: WebSocket):
@@ -76,15 +76,14 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             image_data = data.split(",")[1]
             image_bytes = base64.b64decode(image_data)
-            
+
             results = {
                 "Face++": {
                     "emotions": None,
                     "head_pose": None,
                     "eye_status": None,
                     "dominant_emotion": None,
-                    "recommendation": None,
-                    "most_prevalent_emotion": None,
+                    "most_prevalent_emotion": "Running...",
                     "error": None
                 }
             }
@@ -96,7 +95,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     'api_secret': FACEPP_API_SECRET,
                     'return_attributes': 'emotion,headpose,eyestatus'
                 }
-            
+
                 response = requests.post(FACEPP_API_ENDPOINT, files=files, data=data)
                 response.raise_for_status()
 
@@ -110,18 +109,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     results["Face++"]["head_pose"] = face_attributes['headpose']
                     results["Face++"]["eye_status"] = face_attributes['eyestatus']
                     results["Face++"]["dominant_emotion"] = extract_dominant_attribute(emotions)
-                   # results["Face++"]["recommendation"] = get_recommendation(
-                    #    results["Face++"]["dominant_emotion"],
-                    #    face_attributes['headpose'],
-                    #    face_attributes['eyestatus']
-                    #)
-                    
-                    # Calculate most prevalent emotion if we have 10 readings
-                    logging.info(f"Emotion history length: {len(emotion_history)}")
-                    if len(emotion_history) == 10:
-                        results["Face++"]["most_prevalent_emotion"] = calculate_most_intense_emotion()
-                        logging.info(f"Most prevalent emotion: {results['Face++']['most_prevalent_emotion']}")
-                        emotion_history.clear()  # Clear the history after processing 10 readings
+
+                    if len(emotion_history) == 5:
+                        most_intense_emotion = calculate_most_intense_emotion()
+                        if most_intense_emotion:
+                                                   results["Face++"]["most_prevalent_emotion"] = f"Most intense: {most_intense_emotion}"
+                        emotion_history.clear()
                     
                     logging.info(f"Face++ API response: {response.json()}")
                 else:
@@ -140,3 +133,4 @@ async def websocket_endpoint(websocket: WebSocket):
 
 if __name__ == "__main__":
     uvicorn.run("test:app", host="0.0.0.0", port=8002, reload=True)
+
