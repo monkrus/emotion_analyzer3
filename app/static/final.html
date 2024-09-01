@@ -33,8 +33,13 @@
             text-align: center;
             width: 100%;
         }
-        #emotionChart {
-            max-width: 400px;
+        #charts {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+        }
+        #emotionChart, #poseChart {
+            max-width: 48%;
             margin: 20px auto;
         }
     </style>
@@ -46,10 +51,13 @@
         <h2 id="dominantEmotion">Dominant Emotion: running...</h2>
         <h2 id="mostPrevalentEmotion">Most intense: running...</h2>
     </div>
-    <canvas id="emotionChart"></canvas>
+    <div id="charts">
+        <canvas id="emotionChart"></canvas>
+        <canvas id="poseChart"></canvas>
+    </div>
 
     <script>
-        let chart;
+        let emotionChart, poseChart;
         let socket;
 
         function startWebSocket() {
@@ -101,19 +109,24 @@
 
             console.log(`Updated Frontend - Dominant Emotion: ${dominantEmotion}, Most Intense Emotion: ${mostIntenseEmotion}`);
 
-            // Update Chart if Emotions are Present
+            // Update Emotion Chart if Emotions are Present
             if (facepp.emotions) {
-                updateChart(facepp.emotions);
+                updateEmotionChart(facepp.emotions);
+            }
+
+            // Update Pose Chart if Head Pose and Eye Status are Present
+            if (facepp.head_pose && facepp.eye_status) {
+                updatePoseChart(facepp.head_pose, facepp.eye_status);
             }
         }
 
-        function updateChart(emotions) {
+        function updateEmotionChart(emotions) {
             const labels = Object.keys(emotions);
             const data = Object.values(emotions);
 
-            if (!chart) {
+            if (!emotionChart) {
                 const ctx = document.getElementById('emotionChart').getContext('2d');
-                chart = new Chart(ctx, {
+                emotionChart = new Chart(ctx, {
                     type: 'bar',
                     data: {
                         labels: labels,
@@ -134,31 +147,73 @@
                     }
                 });
             } else {
-                chart.data.labels = labels;
-                chart.data.datasets[0].data = data;
-                chart.update();
+                emotionChart.data.labels = labels;
+                emotionChart.data.datasets[0].data = data;
+                emotionChart.update();
             }
         }
 
-        document.addEventListener('DOMContentLoaded', async () => {
-            const video = document.getElementById('webcam');
-            const constraints = { video: true };
+        function updatePoseChart(headPose, eyeStatus) {
+            const poseLabels = ['Pitch', 'Yaw', 'Roll', 'Left Eye', 'Right Eye'];
+            const poseData = [
+                headPose.pitch_angle,
+                headPose.yaw_angle,
+                headPose.roll_angle,
+                eyeStatus.left_eye_status.no_glass_eye_open,
+                eyeStatus.right_eye_status.no_glass_eye_open
+            ];
 
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                video.srcObject = stream;
-                startWebSocket();
-
-                setInterval(() => {
-                    if (socket.readyState === WebSocket.OPEN) {
-                        const frame = captureFrame(video);
-                        socket.send(frame);
+            if (!poseChart) {
+                const ctx = document.getElementById('poseChart').getContext('2d');
+                poseChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: poseLabels,
+                        datasets: [{
+                            label: 'Pose & Eye Status',
+                            data: poseData,
+                            backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
                     }
-                }, 1000);
-            } catch (err) {
-                console.error("Error accessing webcam: ", err);
+                });
+            } else {
+                poseChart.data.labels = poseLabels;
+                poseChart.data.datasets[0].data = poseData;
+                poseChart.update();
             }
-        });
+        }
+
+        async function startVideo() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                const video = document.getElementById('webcam');
+                video.srcObject = stream;
+                video.addEventListener('loadeddata', () => {
+                    setInterval(() => {
+                        const imageData = captureFrame(video);
+                        if (socket.readyState === WebSocket.OPEN) {
+                            socket.send(imageData);
+                        }
+                    }, 10000);
+                });
+            } catch (error) {
+                console.error('Error accessing webcam:', error);
+            }
+        }
+
+        window.onload = () => {
+            startVideo();
+            startWebSocket();
+        };
     </script>
 </body>
 </html>

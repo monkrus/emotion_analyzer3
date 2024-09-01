@@ -161,6 +161,3 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logging.error(f"Error processing WebSocket message: {e}")
             await websocket.send_json({"error": "Failed to process image."})
-
-if __name__ == "__main__":
-    uvicorn.run("final:app", host="0.0.0.0", port=8003, reload=True)
