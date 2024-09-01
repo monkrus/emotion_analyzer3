@@ -7,7 +7,7 @@ Python code using FastAPI that interacts with the **Face++ API** to detect the e
 
 - app.py   `uvicorn app:app --reload --port 8000`    Or just type `run` in the terminal. Initital attempt.
 - test.py  `uvicorn test:app --reload --port 8002`   Added additional statistics (deques of most intence feeling) for emotion recognition.
-- app1.py  `uvicorn final:app --reload --port 8003`  Added logic tom improve the output.
+- app1.py  `uvicorn final:app --reload --port 8003`  Added logic to improve the output.
 
 **Summary** (for final.py)
 Data Capture: Webcam frames are captured and sent to the backend.
