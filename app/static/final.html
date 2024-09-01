@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Webcam Emotion Detection</title>
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        video {
+            width: 100%;
+            max-width: 600px;
+            display: block;
+        }
+        #results {
+            margin-top: 20px;
+            width: 100%;
+            max-width: 600px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #dominantEmotion, #mostPrevalentEmotion {
+            text-align: center;
+            width: 100%;
+        }
+        #emotionChart {
+            max-width: 400px;
+            margin: 20px auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Live Webcam Emotion Detection</h1>
+    <video id="webcam" autoplay></video>
+    <div id="results">
+        <h2 id="dominantEmotion">Dominant Emotion: running...</h2>
+        <h2 id="mostPrevalentEmotion">Most intense: running...</h2>
+    </div>
+    <canvas id="emotionChart"></canvas>
+
+    <script>
+        let chart;
+        let socket;
+
+        function startWebSocket() {
+            socket = new WebSocket(`ws://${window.location.host}/ws/emotion`);
+
+            socket.onopen = function () {
+                console.log("WebSocket connection established.");
+            };
+
+            socket.onmessage = function (event) {
+                const data = JSON.parse(event.data);
+                console.log("Received data: ", data);
+                displayResults(data);
+            };
+
+            socket.onerror = function (error) {
+                console.error("WebSocket error:", error);
+            };
+
+            socket.onclose = function (event) {
+                console.error("WebSocket closed. Code:", event.code, "Reason:", event.reason);
+                setTimeout(startWebSocket, 1000); // Attempt to reconnect after 1 second
+            };
+        }
+
+        function captureFrame(video) {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL('image/jpeg');
+        }
+
+        function displayResults(data) {
+            const facepp = data["Face++"];
+            
+            // Handle Dominant Emotion
+            const dominantEmotion = facepp.dominant_emotion || "Running...";
+            document.getElementById('dominantEmotion').textContent = `Dominant Emotion: ${dominantEmotion}`;
+
+            // Handle Most Intense Emotion
+            let mostIntenseEmotion = facepp.most_prevalent_emotion;
+            if (mostIntenseEmotion && !mostIntenseEmotion.includes("Running...")) {
+                document.getElementById('mostPrevalentEmotion').textContent = mostIntenseEmotion;
+            } else {
+                document.getElementById('mostPrevalentEmotion').textContent = "Most intense: Running...";
+            }
+
+            console.log(`Updated Frontend - Dominant Emotion: ${dominantEmotion}, Most Intense Emotion: ${mostIntenseEmotion}`);
+
+            // Update Chart if Emotions are Present
+            if (facepp.emotions) {
+                updateChart(facepp.emotions);
+            }
+        }
+
+        function updateChart(emotions) {
+            const labels = Object.keys(emotions);
+            const data = Object.values(emotions);
+
+            if (!chart) {
+                const ctx = document.getElementById('emotionChart').getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Emotion Intensity',
+                            data: data,
+                            backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            } else {
+                chart.data.labels = labels;
+                chart.data.datasets[0].data = data;
+                chart.update();
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const video = document.getElementById('webcam');
+            const constraints = { video: true };
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                startWebSocket();
+
+                setInterval(() => {
+                    if (socket.readyState === WebSocket.OPEN) {
+                        const frame = captureFrame(video);
+                        socket.send(frame);
+                    }
+                }, 1000);
+            } catch (err) {
+                console.error("Error accessing webcam: ", err);
+            }
+        });
+    </script>
+</body>
+</html>
