@@ -9,6 +9,14 @@ Python code using FastAPI that interacts with the **Face++ API** to detect the e
 - test.py  `uvicorn test:app --reload --port 8002`   Added additional statistics (deques of most intence feeling) for emotion recognition.
 - app1.py  `uvicorn final:app --reload --port 8003`  Added logic tom improve the output.
 
+**Summary** (for final.py)
+Data Capture: Webcam frames are captured and sent to the backend.
+Processing: The backend uses Face++ to detect emotions, head pose, and eye status.
+Adjustment: Emotions are adjusted based on head pose and eye status.
+Calculation: The most intense emotion is calculated from adjusted readings.
+Communication: Results are sent back to the frontend.
+Display: The frontend updates the display and charts with the latest data.
+
 **Flow**
 The Face++ API responds with a JSON object containing detected attributes:
 Emotions: A dictionary of detected emotions and their intensities.
