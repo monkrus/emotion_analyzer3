@@ -60,6 +60,7 @@
         let emotionChart, poseChart;
         let socket;
 
+        // Start WebSocket connection and handle message
         function startWebSocket() {
             socket = new WebSocket(`ws://${window.location.host}/ws/emotion`);
 
@@ -69,7 +70,7 @@
 
             socket.onmessage = function (event) {
                 const data = JSON.parse(event.data);
-                console.log("Received data: ", data);
+                console.log("Received data from WebSocket:", data);
                 displayResults(data);
             };
 
@@ -83,46 +84,51 @@
             };
         }
 
+        // Capture video frame as base64 encoded image
         function captureFrame(video) {
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             const context = canvas.getContext('2d');
             context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            return canvas.toDataURL('image/jpeg');
+            const imageData = canvas.toDataURL('image/jpeg');
+            console.log("Captured frame:", imageData.slice(0, 100)); // Log first 100 chars
+            return imageData;
         }
 
+        // Display results in the DOM
         function displayResults(data) {
             const facepp = data["Face++"];
-            
-            // Handle Dominant Emotion
+
+            // Display Dominant Emotion
             const dominantEmotion = facepp.dominant_emotion || "Running...";
             document.getElementById('dominantEmotion').textContent = `Dominant Emotion: ${dominantEmotion}`;
+            console.log("Dominant Emotion:", dominantEmotion);
 
-            // Handle Most Intense Emotion
+            // Display Most Intense Emotion
             let mostIntenseEmotion = facepp.most_prevalent_emotion;
             if (mostIntenseEmotion && !mostIntenseEmotion.includes("Running...")) {
                 document.getElementById('mostPrevalentEmotion').textContent = mostIntenseEmotion;
             } else {
                 document.getElementById('mostPrevalentEmotion').textContent = "Most intense: Running...";
             }
+            console.log("Most Intense Emotion:", mostIntenseEmotion);
 
-            console.log(`Updated Frontend - Dominant Emotion: ${dominantEmotion}, Most Intense Emotion: ${mostIntenseEmotion}`);
-
-            // Update Emotion Chart if Emotions are Present
+            // Update charts
             if (facepp.emotions) {
                 updateEmotionChart(facepp.emotions);
             }
 
-            // Update Pose Chart if Head Pose and Eye Status are Present
             if (facepp.head_pose && facepp.eye_status) {
                 updatePoseChart(facepp.head_pose, facepp.eye_status);
             }
         }
 
+        // Update the Emotion Chart
         function updateEmotionChart(emotions) {
             const labels = Object.keys(emotions);
             const data = Object.values(emotions);
+            console.log("Emotion Chart Data:", data);
 
             if (!emotionChart) {
                 const ctx = document.getElementById('emotionChart').getContext('2d');
@@ -153,6 +159,7 @@
             }
         }
 
+        // Update the Pose Chart
         function updatePoseChart(headPose, eyeStatus) {
             const poseLabels = ['Pitch', 'Yaw', 'Roll', 'Left Eye', 'Right Eye'];
             const poseData = [
@@ -162,6 +169,7 @@
                 eyeStatus.left_eye_status.no_glass_eye_open,
                 eyeStatus.right_eye_status.no_glass_eye_open
             ];
+            console.log("Pose Chart Data:", poseData);
 
             if (!poseChart) {
                 const ctx = document.getElementById('poseChart').getContext('2d');
@@ -192,6 +200,7 @@
             }
         }
 
+        // Start video and capture frames periodically
         async function startVideo() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -203,7 +212,7 @@
                         if (socket.readyState === WebSocket.OPEN) {
                             socket.send(imageData);
                         }
-                    }, 10000);
+                    }, 5000); // Adjusted to capture every 5 seconds
                 });
             } catch (error) {
                 console.error('Error accessing webcam:', error);

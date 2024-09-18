@@ -33,8 +33,13 @@
             text-align: center;
             width: 100%;
         }
-        #emotionChart {
-            max-width: 400px;
+        #charts {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+        }
+        #emotionChart, #poseChart {
+            max-width: 48%;
             margin: 20px auto;
         }
     </style>
@@ -46,12 +51,16 @@
         <h2 id="dominantEmotion">Dominant Emotion: running...</h2>
         <h2 id="mostPrevalentEmotion">Most intense: running...</h2>
     </div>
-    <canvas id="emotionChart"></canvas>
+    <div id="charts">
+        <canvas id="emotionChart"></canvas>
+        <canvas id="poseChart"></canvas>
+    </div>
 
     <script>
-        let chart;
+        let emotionChart, poseChart;
         let socket;
 
+        // Start WebSocket connection and handle message
         function startWebSocket() {
             socket = new WebSocket(`ws://${window.location.host}/ws/emotion`);
 
@@ -61,7 +70,7 @@
 
             socket.onmessage = function (event) {
                 const data = JSON.parse(event.data);
-                console.log("Received data: ", data);
+                console.log("Received data from WebSocket:", data);
                 displayResults(data);
             };
 
@@ -75,45 +84,55 @@
             };
         }
 
+        // Capture video frame as base64 encoded image
         function captureFrame(video) {
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             const context = canvas.getContext('2d');
             context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            return canvas.toDataURL('image/jpeg');
+            const imageData = canvas.toDataURL('image/jpeg');
+            console.log("Captured frame:", imageData.slice(0, 100)); // Log first 100 chars
+            return imageData;
         }
 
+        // Display results in the DOM
         function displayResults(data) {
             const facepp = data["Face++"];
-            
-            // Handle Dominant Emotion
-            const dominantEmotion = facepp.dominant_emotion || "running...";
-            document.getElementById('dominantEmotion').textContent = `Dominant Emotion: ${dominantEmotion}`;
 
-            // Handle Most Intense Emotion
+            // Display Dominant Emotion
+            const dominantEmotion = facepp.dominant_emotion || "Running...";
+            document.getElementById('dominantEmotion').textContent = `Dominant Emotion: ${dominantEmotion}`;
+            console.log("Dominant Emotion:", dominantEmotion);
+
+            // Display Most Intense Emotion
             let mostIntenseEmotion = facepp.most_prevalent_emotion;
-            if (mostIntenseEmotion && !mostIntenseEmotion.includes("running...")) {
+            if (mostIntenseEmotion && !mostIntenseEmotion.includes("Running...")) {
                 document.getElementById('mostPrevalentEmotion').textContent = mostIntenseEmotion;
             } else {
-                document.getElementById('mostPrevalentEmotion').textContent = "Most intense: running...";
+                document.getElementById('mostPrevalentEmotion').textContent = "Most intense: Running...";
+            }
+            console.log("Most Intense Emotion:", mostIntenseEmotion);
+
+            // Update charts
+            if (facepp.emotions) {
+                updateEmotionChart(facepp.emotions);
             }
 
-            console.log(`Updated Frontend - Dominant Emotion: ${dominantEmotion}, Most Intense Emotion: ${mostIntenseEmotion}`);
-
-            // Update Chart if Emotions are Present
-            if (facepp.emotions) {
-                updateChart(facepp.emotions);
+            if (facepp.head_pose && facepp.eye_status) {
+                updatePoseChart(facepp.head_pose, facepp.eye_status);
             }
         }
 
-        function updateChart(emotions) {
+        // Update the Emotion Chart
+        function updateEmotionChart(emotions) {
             const labels = Object.keys(emotions);
             const data = Object.values(emotions);
+            console.log("Emotion Chart Data:", data);
 
-            if (!chart) {
+            if (!emotionChart) {
                 const ctx = document.getElementById('emotionChart').getContext('2d');
-                chart = new Chart(ctx, {
+                emotionChart = new Chart(ctx, {
                     type: 'bar',
                     data: {
                         labels: labels,
@@ -134,31 +153,76 @@
                     }
                 });
             } else {
-                chart.data.labels = labels;
-                chart.data.datasets[0].data = data;
-                chart.update();
+                emotionChart.data.labels = labels;
+                emotionChart.data.datasets[0].data = data;
+                emotionChart.update();
             }
         }
 
-        document.addEventListener('DOMContentLoaded', async () => {
-            const video = document.getElementById('webcam');
-            const constraints = { video: true };
+        // Update the Pose Chart
+        function updatePoseChart(headPose, eyeStatus) {
+            const poseLabels = ['Pitch', 'Yaw', 'Roll', 'Left Eye', 'Right Eye'];
+            const poseData = [
+                headPose.pitch_angle,
+                headPose.yaw_angle,
+                headPose.roll_angle,
+                eyeStatus.left_eye_status.no_glass_eye_open,
+                eyeStatus.right_eye_status.no_glass_eye_open
+            ];
+            console.log("Pose Chart Data:", poseData);
 
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                video.srcObject = stream;
-                startWebSocket();
-
-                setInterval(() => {
-                    if (socket.readyState === WebSocket.OPEN) {
-                        const frame = captureFrame(video);
-                        socket.send(frame);
+            if (!poseChart) {
+                const ctx = document.getElementById('poseChart').getContext('2d');
+                poseChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: poseLabels,
+                        datasets: [{
+                            label: 'Pose & Eye Status',
+                            data: poseData,
+                            backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
                     }
-                }, 1000);
-            } catch (err) {
-                console.error("Error accessing webcam: ", err);
+                });
+            } else {
+                poseChart.data.labels = poseLabels;
+                poseChart.data.datasets[0].data = poseData;
+                poseChart.update();
             }
-        });
+        }
+
+        // Start video and capture frames periodically
+        async function startVideo() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                const video = document.getElementById('webcam');
+                video.srcObject = stream;
+                video.addEventListener('loadeddata', () => {
+                    setInterval(() => {
+                        const imageData = captureFrame(video);
+                        if (socket.readyState === WebSocket.OPEN) {
+                            socket.send(imageData);
+                        }
+                    }, 5000); // Adjusted to capture every 5 seconds
+                });
+            } catch (error) {
+                console.error('Error accessing webcam:', error);
+            }
+        }
+
+        window.onload = () => {
+            startVideo();
+            startWebSocket();
+        };
     </script>
 </body>
 </html>
