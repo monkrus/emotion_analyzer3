@@ -30,61 +30,31 @@ FACEPP_API_KEY = os.getenv("FACEPP_API_KEY")
 FACEPP_API_SECRET = os.getenv("FACEPP_API_SECRET")
 FACEPP_API_ENDPOINT = os.getenv("FACEPP_API_ENDPOINT")
 
-# Ensure that the API key, secret, and endpoint are set
 if not FACEPP_API_KEY or not FACEPP_API_SECRET or not FACEPP_API_ENDPOINT:
     raise ValueError("One or more environment variables for Face++ API are not set.")
 
 # Mount the static directory to serve static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# A deque to store the last 5 emotion readings
 emotion_history = deque(maxlen=5)
 
 @app.get("/", response_class=HTMLResponse)
 async def main_page():
     try:
-        with open("static/final.html") as f:
+        with open("static/test.html") as f:
             return HTMLResponse(content=f.read(), status_code=200)
     except Exception as e:
         logging.error(f"Error loading main page: {str(e)}")
         return HTMLResponse(content=f"<h1>Error loading page</h1><p>{str(e)}</p>", status_code=500)
 
-def adjust_emotions_for_head_pose_and_eyes(emotions, head_pose, eye_status):
-    pitch = head_pose['pitch_angle']
-    yaw = head_pose['yaw_angle']
-
-    # Adjust emotions based on pitch
-    if pitch < -10:  # Significant downward tilt
-        emotions['happiness'] *= 0.7  # Reduce happiness intensity
-    elif pitch > 10:  # Significant upward tilt
-        emotions['surprise'] *= 1.3  # Enhance surprise
-        emotions['happiness'] *= 1.2  # Enhance happiness
-
-    # Adjust emotions based on yaw
-    if abs(yaw) > 20:  # Large yaw (side-to-side movement)
-        emotions['happiness'] *= 0.8  # Reduce happiness
-        emotions['disgust'] *= 1.2  # Increase negative emotion like disgust
-
-    # Adjust emotions based on eye status
-    eye_openness = (eye_status['left_eye_status']['no_glass_eye_open'] + eye_status['right_eye_status']['no_glass_eye_open']) / 2
-    if eye_openness > 0.8:  # Eyes wide open
-        emotions['surprise'] *= 1.4  # Increase surprise
-        emotions['fear'] *= 1.3  # Increase fear
-    elif eye_openness < 0.3:  # Eyes closed or nearly closed
-        emotions['neutral'] *= 1.2  # Increase neutrality
-        emotions['disgust'] *= 1.1  # Increase negative emotions like disgust or suspicion
-
-    return emotions
-
 def extract_dominant_attribute(attribute_dict):
     return max(attribute_dict, key=attribute_dict.get)
 
-def calculate_most_intense_emotion(emotions, head_pose, eye_status):
+def calculate_most_intense_emotion():
     combined_emotions = Counter()
 
-    for emotion_reading in emotion_history:
-        adjusted_emotions = adjust_emotions_for_head_pose_and_eyes(emotion_reading, head_pose, eye_status)
-        combined_emotions.update(adjusted_emotions)
+    for emotions in emotion_history:
+        combined_emotions.update(emotions)
 
     most_intense_emotion = combined_emotions.most_common(1)
     if most_intense_emotion:
@@ -94,6 +64,32 @@ def calculate_most_intense_emotion(emotions, head_pose, eye_status):
     else:
         logging.info("No prevailing emotion detected")
         return None
+
+def adjust_emotions_by_head_pose_and_eye_status(emotions, head_pose, eye_status):
+    pitch = head_pose['pitch_angle']
+    yaw = head_pose['yaw_angle']
+
+    if pitch < 0:
+        emotions['happiness'] *= 0.8  
+    elif pitch > 15:  
+        emotions['surprise'] *= 1.2  
+        emotions['happiness'] *= 1.2
+
+    if abs(yaw) > 15:
+        emotions['happiness'] *= 0.8
+        emotions['disgust'] *= 1.2
+
+    left_eye_open = eye_status['left_eye_status']['no_glass_eye_open']
+    right_eye_open = eye_status['right_eye_status']['no_glass_eye_open']
+
+    if left_eye_open > 0.8 and right_eye_open > 0.8:  
+        emotions['surprise'] *= 1.2
+        emotions['fear'] *= 1.2  
+    elif left_eye_open < 0.4 and right_eye_open < 0.4:  
+        emotions['tiredness'] = 1.0  
+        emotions['boredom'] = 1.0  
+
+    return emotions
 
 @app.websocket("/ws/emotion")
 async def websocket_endpoint(websocket: WebSocket):
@@ -116,48 +112,54 @@ async def websocket_endpoint(websocket: WebSocket):
                 }
             }
 
+            if not FACEPP_API_ENDPOINT:
+                results["Face++"]["error"] = "Face++ API endpoint not configured"
+                await websocket.send_json(results)
+                return
+
             try:
-                files = {'image_file': image_bytes}
-                data = {
-                    'api_key': FACEPP_API_KEY,
-                    'api_secret': FACEPP_API_SECRET,
-                    'return_attributes': 'emotion,headpose,eyestatus'
-                }
+                # Send request to Face++ API for emotion detection
+                response = requests.post(
+                    FACEPP_API_ENDPOINT,
+                    data={"api_key": FACEPP_API_KEY, "api_secret": FACEPP_API_SECRET, "return_attributes": "emotion,headpose,eyestatus"},
+                    files={"image_file": ("image.jpg", image_bytes)}
+                )
+                facepp_data = response.json()
 
-                response = requests.post(FACEPP_API_ENDPOINT, files=files, data=data)
-                response.raise_for_status()
-
-                faces = response.json().get('faces', [])
-                if faces:
-                    face_attributes = faces[0]['attributes']
+                if 'error_message' in facepp_data:
+                    results["Face++"]["error"] = facepp_data['error_message']
+                else:
+                    face_attributes = facepp_data['faces'][0]['attributes']
                     emotions = face_attributes['emotion']
                     head_pose = face_attributes['headpose']
                     eye_status = face_attributes['eyestatus']
 
-                    emotion_history.append(emotions)
+                    adjusted_emotions = adjust_emotions_by_head_pose_and_eye_status(emotions, head_pose, eye_status)
 
-                    results["Face++"]["emotions"] = emotions
+                    dominant_emotion = extract_dominant_attribute(adjusted_emotions)
+
+                    emotion_history.append(adjusted_emotions)
+
+                    most_intense_emotion = calculate_most_intense_emotion()
+                    if most_intense_emotion:
+                        most_prevalent_emotion = f'You feel {most_intense_emotion} based on recent emotions'
+                    else:
+                        most_prevalent_emotion = 'Running...'
+
+                    results["Face++"]["emotions"] = adjusted_emotions
                     results["Face++"]["head_pose"] = head_pose
                     results["Face++"]["eye_status"] = eye_status
-                    results["Face++"]["dominant_emotion"] = extract_dominant_attribute(emotions)
+                    results["Face++"]["dominant_emotion"] = dominant_emotion
+                    results["Face++"]["most_prevalent_emotion"] = most_prevalent_emotion
 
-                    if len(emotion_history) == 5:
-                        most_intense_emotion = calculate_most_intense_emotion(emotions, head_pose, eye_status)
-                        if most_intense_emotion:
-                            results["Face++"]["most_prevalent_emotion"] = f"Most intense: {most_intense_emotion}"
-                        emotion_history.clear()
-                    
-                    logging.info(f"Face++ API response: {response.json()}")
-                else:
-                    results["Face++"]["error"] = "No face detected"
             except Exception as e:
-                logging.error(f"Face++ API error: {str(e)}")
-                results["Face++"]["error"] = str(e)
-            
+                logging.error(f"Error processing Face++ API request: {str(e)}")
+                results["Face++"]["error"] = f"Error processing Face++ API request: {str(e)}"
+
             await websocket.send_json(results)
         except WebSocketDisconnect:
-            logging.info("Client disconnected")
+            logging.info("WebSocket connection closed")
             break
-        except Exception as e:
-            logging.error(f"Error processing WebSocket message: {e}")
-            await websocket.send_json({"error": "Failed to process image."})
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
